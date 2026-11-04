@@ -8,22 +8,15 @@
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
 <style>
   /* 한 열 헤더 + 2열 카드 그리드. 차트는 위 칸 비율 / 아래 칸 z-score */
+  /* 밝은 화면만 씀: 아주 연한 회색 바탕 + 흰 카드 */
   :root {
-    --bg: #f4f5f7; --panel: #ffffff; --fg: #16191e; --muted: #5d6470; --border: #e1e4e9;
+    --bg: #f7f8fa; --panel: #ffffff; --fg: #16191e; --muted: #5d6470; --border: #e4e7ec; --hover: #f3f5f8;
     --accent: #2563d9; --warn: #b26200; --bad: #c42d2d;
     --ref: #8a919c; --axis: #c3c8cf; --popover: #ffffff; --shadow: 0 4px 16px rgba(20, 24, 31, .12);
     --font: "Pretendard Variable", Pretendard, -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
     --fs-cap: 12px; --fs-body: 14px; --fs-head: 15px; --fs-title: 26px;
     --radius: 8px; --gap: 16px;
     color-scheme: light;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #0f1216; --panel: #171b21; --fg: #e6e8ec; --muted: #9aa1ac; --border: #2a3039;
-      --accent: #6b9dff; --warn: #f0a640; --bad: #ff6b6b;
-      --ref: #7e8692; --axis: #3d4450; --popover: #20252d; --shadow: 0 4px 16px rgba(0, 0, 0, .45);
-      color-scheme: dark;
-    }
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font); font-size: var(--fs-body); line-height: 1.5; }
@@ -87,7 +80,11 @@
   .pb-table tbody tr:last-child td { border-bottom: 0; }
   .pb-table .num { text-align: right; white-space: nowrap; }
   .pb-table tbody tr { cursor: pointer; }
-  .pb-table tbody tr:hover { background: var(--bg); }
+  .pb-table tbody tr:hover { background: var(--hover); }
+  .pb-sort { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; display: inline-flex; align-items: center; gap: 2px; }
+  .pb-sort:hover, th[aria-sort="ascending"] .pb-sort, th[aria-sort="descending"] .pb-sort { color: var(--fg); }
+  .pb-sort:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+  .pb-sort-ind { display: inline-block; width: .9em; font-size: 10px; text-align: center; }
   .pb-table tbody tr:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   .pb-pref { display: block; font-weight: 600; word-break: keep-all; }
   .pb-common { display: block; color: var(--muted); font-size: var(--fs-cap); }
@@ -123,16 +120,17 @@
       <ul class="pb-list pb-note">
         <li>z = (오늘 비율 − 이동평균) ÷ 이동σ</li>
         <li>행 클릭 시 해당 페어 차트 이동</li>
+        <li>열 제목 클릭 시 오름차순 → 내림차순 → 기본 순서로 정렬</li>
       </ul>
       <div class="pb-tablewrap">
         <table class="pb-table" id="summary-table">
           <thead>
             <tr>
-              <th scope="col">페어</th>
-              <th scope="col" class="num">현재</th>
-              <th scope="col" class="num">이동평균</th>
-              <th scope="col" class="num">이동σ</th>
-              <th scope="col" class="num">z</th>
+              <th scope="col" data-key="pref" aria-sort="none"><button type="button" class="pb-sort">페어<span class="pb-sort-ind" aria-hidden="true"></span></button></th>
+              <th scope="col" class="num" data-key="ratio" aria-sort="none"><button type="button" class="pb-sort">현재<span class="pb-sort-ind" aria-hidden="true"></span></button></th>
+              <th scope="col" class="num" data-key="mean" aria-sort="none"><button type="button" class="pb-sort">이동평균<span class="pb-sort-ind" aria-hidden="true"></span></button></th>
+              <th scope="col" class="num" data-key="std" aria-sort="none"><button type="button" class="pb-sort">이동σ<span class="pb-sort-ind" aria-hidden="true"></span></button></th>
+              <th scope="col" class="num" data-key="z" aria-sort="none"><button type="button" class="pb-sort">z<span class="pb-sort-ind" aria-hidden="true"></span></button></th>
             </tr>
           </thead>
           <tbody id="summary-rows"></tbody>
@@ -170,6 +168,8 @@
   const setZ = (el, z) => { el.textContent = fmtZ(z); el.className = zClass(z); };
 
   let pairs = [];
+  let sortKey = null;
+  let sortDir = 0; // 1 오름차순, -1 내림차순, 0 기본 순서
   let win = (() => {
     try { const v = Number(localStorage.getItem('pb-window')); return WINDOWS.includes(v) ? v : 120; } catch { return 120; }
   })();
@@ -242,9 +242,22 @@
       setZ(document.getElementById('far-z'), far.r.z);
     }
 
+    document.querySelectorAll('#summary-table th[data-key]').forEach((th) => {
+      const on = th.dataset.key === sortKey;
+      th.setAttribute('aria-sort', on ? (sortDir === 1 ? 'ascending' : 'descending') : 'none');
+      th.querySelector('.pb-sort-ind').textContent = on ? (sortDir === 1 ? '▲' : '▼') : '';
+    });
+    const sortVal = (x) => (sortKey === 'pref' ? x.p.pref : x.r[sortKey]);
+    const ordered = sortKey
+      ? [...latest].sort((a, b) => {
+        const va = sortVal(a), vb = sortVal(b);
+        return (typeof va === 'string' ? va.localeCompare(vb, 'ko') : va - vb) * sortDir;
+      })
+      : latest;
+
     const tbody = document.getElementById('summary-rows');
     tbody.replaceChildren();
-    for (const {p, r} of latest) {
+    for (const {p, r} of ordered) {
       const tr = document.createElement('tr');
       tr.tabIndex = 0;
       const name = document.createElement('td');
@@ -405,6 +418,19 @@
       win = Number(btn.dataset.window);
       try { localStorage.setItem('pb-window', String(win)); } catch {}
       render();
+    });
+  });
+
+  document.querySelectorAll('#summary-table th[data-key]').forEach((th) => {
+    th.querySelector('.pb-sort').addEventListener('click', () => {
+      if (sortKey !== th.dataset.key) {
+        sortKey = th.dataset.key;
+        sortDir = 1;
+      } else {
+        sortDir = sortDir === 1 ? -1 : 0;
+        if (sortDir === 0) sortKey = null;
+      }
+      if (pairs.length) renderSummary();
     });
   });
 
