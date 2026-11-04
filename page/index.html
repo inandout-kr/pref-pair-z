@@ -79,7 +79,8 @@
   .pb-tip[hidden] { display: none; }
   .pb-tip-date { color: var(--muted); }
 
-  .pb-tablewrap { overflow-x: auto; }
+  .pb-tablewrap { overflow-x: auto; container-type: inline-size; }
+  @container (max-width: 30rem) { .pb-gauge { display: none; } }
   .pb-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
   .pb-table th { text-align: left; padding: 4px 8px; color: var(--muted); font-size: var(--fs-cap); font-weight: 500; border-bottom: 1px solid var(--border); }
   .pb-table td { padding: 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
