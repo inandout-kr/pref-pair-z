@@ -1,0 +1,434 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>우선주 페어 이동 Z</title>
+<meta name="description" content="우선주 ÷ 본주 비율의 60·120·250거래일 이동 z-score. 평일 장 마감 후 자동 갱신.">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<style>
+  /* 한 열 헤더 + 2열 카드 그리드. 차트는 위 칸 비율 / 아래 칸 z-score */
+  :root {
+    --bg: #f4f5f7; --panel: #ffffff; --fg: #16191e; --muted: #5d6470; --border: #e1e4e9;
+    --accent: #2563d9; --warn: #b26200; --bad: #c42d2d;
+    --ref: #8a919c; --axis: #c3c8cf; --popover: #ffffff; --shadow: 0 4px 16px rgba(20, 24, 31, .12);
+    --font: "Pretendard Variable", Pretendard, -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+    --fs-cap: 12px; --fs-body: 14px; --fs-head: 15px; --fs-title: 26px;
+    --radius: 8px; --gap: 16px;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1216; --panel: #171b21; --fg: #e6e8ec; --muted: #9aa1ac; --border: #2a3039;
+      --accent: #6b9dff; --warn: #f0a640; --bad: #ff6b6b;
+      --ref: #7e8692; --axis: #3d4450; --popover: #20252d; --shadow: 0 4px 16px rgba(0, 0, 0, .45);
+      color-scheme: dark;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font); font-size: var(--fs-body); line-height: 1.5; }
+  .pb { max-width: 1280px; margin-inline: auto; padding-block: 28px 40px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: flex; flex-direction: column; gap: 24px; }
+
+  .pb-head { display: flex; flex-direction: column; gap: 6px; }
+  .pb-title { margin: 0; font-size: var(--fs-title); font-weight: 700; letter-spacing: -.01em; text-wrap: balance; }
+  .pb-list { margin: 0; padding-left: 1.25em; display: flex; flex-direction: column; gap: 2px; }
+  .pb-lede b { font-weight: 650; }
+  .pb-meta { margin: 0; color: var(--muted); font-size: var(--fs-cap); font-variant-numeric: tabular-nums; }
+
+  .pb-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding-block: 4px; }
+  .pb-controls-label { margin-right: 4px; color: var(--muted); font-size: var(--fs-cap); }
+  .pb-win { font: inherit; font-size: var(--fs-cap); font-variant-numeric: tabular-nums; padding: 5px 12px; color: var(--fg); background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer; }
+  .pb-win[aria-pressed="true"] { color: var(--bg); background: var(--fg); border-color: var(--fg); }
+  .pb-win:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .pb-grid { display: grid; gap: var(--gap); grid-template-columns: repeat(auto-fit, minmax(min(100%, max(24rem, calc((100% - var(--gap)) / 2))), 1fr)); }
+  .pb-card { min-width: 0; display: flex; flex-direction: column; gap: 10px; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; scroll-margin-top: 16px; }
+  .pb-card h2, .pb-card h3 { margin: 0; font-size: var(--fs-head); font-weight: 600; }
+  .pb-code { margin-left: 6px; color: var(--muted); font-size: var(--fs-cap); font-weight: 400; font-variant-numeric: tabular-nums; }
+  .pb-note { margin: 0; color: var(--muted); font-size: var(--fs-cap); }
+
+  .pb-stats { margin: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+  .pb-stats div { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .pb-stats dt { color: var(--muted); font-size: var(--fs-cap); }
+  .pb-stats dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .pb-z-warn { color: var(--warn); }
+  .pb-z-bad { color: var(--bad); }
+
+  .pb-chart { position: relative; min-height: 366px; }
+  .pb-svg { display: block; overflow: visible; }
+  .pb-svg text { font-variant-numeric: tabular-nums; font-size: var(--fs-cap); }
+  .pb-tick text, .pb-cap text, .pb-xaxis text { fill: var(--muted); }
+  .pb-xaxis path, .pb-xaxis line { stroke: var(--axis); }
+  .pb-zone { fill: var(--accent); opacity: .08; }
+  .pb-band { fill: var(--accent); opacity: .14; }
+  .pb-mean { fill: none; stroke: var(--ref); stroke-width: 1.25; stroke-dasharray: 4 3; }
+  .pb-lvl-line { fill: none; stroke-width: 1; }
+  .pb-lvl-line.pb-k0 { stroke: var(--ref); stroke-width: 1.5; }
+  .pb-lvl-line.pb-k1 { stroke: var(--ref); stroke-dasharray: 4 3; }
+  .pb-lvl-line.pb-k2 { stroke: var(--warn); stroke-dasharray: 4 3; }
+  .pb-lvl-line.pb-k3 { stroke: var(--bad); stroke-dasharray: 4 3; }
+  .pb-lvl text { fill: var(--muted); }
+  .pb-lvl .pb-k0 { fill: var(--fg); }
+  .pb-lvl .pb-k2 { fill: var(--warn); }
+  .pb-lvl .pb-k3 { fill: var(--bad); }
+  .pb-line { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
+  .pb-rule { stroke: var(--axis); stroke-width: 1; }
+  .pb-hover { stroke: var(--panel); stroke-width: 2; }
+
+  .pb-tip { position: absolute; top: 0; left: 0; z-index: 2; pointer-events: none; display: flex; flex-direction: column; gap: 2px; white-space: nowrap; background: var(--popover); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 6px 10px; font-size: var(--fs-cap); font-variant-numeric: tabular-nums; }
+  .pb-tip[hidden] { display: none; }
+  .pb-tip-date { color: var(--muted); }
+
+  .pb-tablewrap { overflow-x: auto; }
+  .pb-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  .pb-table th { text-align: left; padding: 4px 8px; color: var(--muted); font-size: var(--fs-cap); font-weight: 500; border-bottom: 1px solid var(--border); }
+  .pb-table td { padding: 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  .pb-table tbody tr:last-child td { border-bottom: 0; }
+  .pb-table .num { text-align: right; white-space: nowrap; }
+  .pb-table tbody tr { cursor: pointer; }
+  .pb-table tbody tr:hover { background: var(--bg); }
+  .pb-table tbody tr:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .pb-pref { display: block; font-weight: 600; word-break: keep-all; }
+  .pb-common { display: block; color: var(--muted); font-size: var(--fs-cap); }
+  .pb-zcell { display: inline-flex; align-items: center; gap: 8px; }
+  .pb-gauge line { stroke: var(--axis); stroke-width: 1; }
+
+  .pb-method, .pb-foot { margin: 0; max-width: 72ch; color: var(--muted); font-size: var(--fs-cap); line-height: 1.6; }
+  .pb-error { margin: 0; color: var(--bad); }
+  @media (max-width: 30rem) { .pb-gauge { display: none; } .pb-card { padding: 16px; } }
+</style>
+</head>
+<body>
+<main class="pb">
+  <header class="pb-head">
+    <h1 class="pb-title" id="top">우선주 페어 이동 Z</h1>
+    <ul class="pb-list pb-lede">
+      <li>최근 <b id="win-label">—</b>거래일</li>
+      <li>최대 z 페어: <b id="far-name">—</b>(z: <b id="far-z">—</b>)</li>
+    </ul>
+    <div class="pb-controls" id="window-controls" role="group" aria-label="이동 구간">
+      <span class="pb-controls-label">이동 구간</span>
+      <button type="button" class="pb-win" id="win-60" data-window="60" aria-pressed="false">60일</button>
+      <button type="button" class="pb-win" id="win-120" data-window="120" aria-pressed="true">120일</button>
+      <button type="button" class="pb-win" id="win-250" data-window="250" aria-pressed="false">250일</button>
+    </div>
+    <p class="pb-meta"><span id="first-date">—</span> ~ <span id="last-date">—</span> 일봉 종가</p>
+    <p class="pb-error" id="load-error" hidden>데이터를 불러오지 못했습니다. 잠시 뒤 새로고침해 보세요.</p>
+  </header>
+
+  <div class="pb-grid" id="grid">
+    <article class="pb-card" id="summary">
+      <h2 id="summary-title">현재</h2>
+      <ul class="pb-list pb-note">
+        <li>z = (오늘 비율 − 이동평균) ÷ 이동σ</li>
+        <li>행 클릭 시 해당 페어 차트 이동</li>
+      </ul>
+      <div class="pb-tablewrap">
+        <table class="pb-table" id="summary-table">
+          <thead>
+            <tr>
+              <th scope="col">페어</th>
+              <th scope="col" class="num">현재</th>
+              <th scope="col" class="num">이동평균</th>
+              <th scope="col" class="num">이동σ</th>
+              <th scope="col" class="num">z</th>
+            </tr>
+          </thead>
+          <tbody id="summary-rows"></tbody>
+        </table>
+      </div>
+    </article>
+  </div>
+
+  <p class="pb-method" id="method">이동 구간 짧을수록 z가 자주, 크게 움직이고 신호 잦아짐. 구간이 길수록 평균이 천천히 따라오므로 추세 타는 페어는 한쪽에 오래 머묾. 위 칸 음영은 이동평균 주변의 σ 범위, 아래 칸 가로선은 z-score 기준선. 배당락일에는 본주와 우선주의 배당 차이만큼 비율이 움직임.</p>
+  <p class="pb-foot">마지막 갱신 <span id="updated">—</span> · 데이터 네이버 금융 일봉 · 평일 장 마감 후 자동 갱신</p>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"></script>
+<script>
+  const WINDOWS = [60, 120, 250];
+  const LEVELS = [-3, -2, -1, 0, 1, 2, 3];
+  const BAND_K = 2;
+  const Z_CLIP = 5;
+  const MT = 18, H1 = 118, GAP = 28, H2 = 178, MB = 24;
+  const TOP2 = MT + H1 + GAP;
+  const H = TOP2 + H2 + MB;
+  const NOTES = {
+    '삼성화재': '본주 종가가 하루만 급등했다 돌아온 날(2025-12-11)이 있습니다. 그날 z는 아래로 크게 튀고(차트 범위 밖은 잘라서 그림), 그 하루가 이후 이동 구간 동안 σ를 키워서 z가 실제보다 작게 나옵니다.',
+  };
+
+  const fmt2 = d3.format('.2f');
+  const fmtZ = d3.format('+.2f');
+  const fmtInt = d3.format(',');
+  const parseDay = d3.utcParse('%Y-%m-%d');
+  const pct = (v) => fmt2(v) + '%';
+  const pp = (v) => fmt2(v) + '%p';
+  const zClass = (z) => (Math.abs(z) >= 3 ? 'pb-z-bad' : Math.abs(z) >= 2 ? 'pb-z-warn' : '');
+  const zFill = (z) => (Math.abs(z) >= 3 ? 'var(--bad)' : Math.abs(z) >= 2 ? 'var(--warn)' : 'var(--accent)');
+  const levelName = (k) => (k === 0 ? '0' : (k > 0 ? '+' : '−') + Math.abs(k) + 'σ');
+  const setZ = (el, z) => { el.textContent = fmtZ(z); el.className = zClass(z); };
+
+  let pairs = [];
+  let win = (() => {
+    try { const v = Number(localStorage.getItem('pb-window')); return WINDOWS.includes(v) ? v : 120; } catch { return 120; }
+  })();
+
+  function rowsFor(p) {
+    const w = p.w[String(win)];
+    const rows = [];
+    p.days.forEach((day, i) => {
+      if (w.z[i] == null) return;
+      rows.push({day, date: p.dates[i], ratio: p.ratio[i], mean: w.mean[i], std: w.std[i], z: w.z[i], c: p.commonClose[i], pc: p.prefClose[i]});
+    });
+    return rows;
+  }
+
+  function goTo(id) {
+    const card = document.getElementById(id);
+    if (!card) return;
+    card.scrollIntoView({behavior: 'smooth', block: 'start'});
+    history.replaceState(null, '', '#' + id);
+  }
+
+  function buildCards() {
+    const grid = document.getElementById('grid');
+    for (const p of pairs) {
+      const card = document.createElement('article');
+      card.className = 'pb-card';
+      card.id = 'pair-' + p.commonCode;
+      const h = document.createElement('h3');
+      h.textContent = `${p.pref} / ${p.pair}`;
+      const code = document.createElement('span');
+      code.className = 'pb-code';
+      code.textContent = `${p.prefCode} / ${p.commonCode}`;
+      h.append(code);
+      const dl = document.createElement('dl');
+      dl.className = 'pb-stats';
+      p.el = {};
+      for (const [key, label] of [['ratio', '현재'], ['mean', '이동평균'], ['std', '이동σ'], ['z', 'z']]) {
+        const div = document.createElement('div');
+        const dt = document.createElement('dt');
+        dt.textContent = label;
+        const dd = document.createElement('dd');
+        dd.textContent = '—';
+        div.append(dt, dd);
+        dl.append(div);
+        p.el[key] = dd;
+      }
+      const chart = document.createElement('div');
+      chart.className = 'pb-chart';
+      chart.id = 'chart-' + p.commonCode;
+      p.el.chart = chart;
+      card.append(h, dl, chart);
+      if (NOTES[p.pair]) {
+        const note = document.createElement('p');
+        note.className = 'pb-note';
+        note.textContent = NOTES[p.pair];
+        card.append(note);
+      }
+      grid.append(card);
+    }
+  }
+
+  function renderSummary() {
+    document.getElementById('win-label').textContent = String(win);
+    document.querySelectorAll('.pb-win').forEach((b) => b.setAttribute('aria-pressed', String(Number(b.dataset.window) === win)));
+
+    const latest = pairs.map((p) => ({p, r: rowsFor(p).at(-1)})).filter((x) => x.r);
+    const far = latest.reduce((a, b) => (Math.abs(b.r.z) > Math.abs(a.r.z) ? b : a), latest[0]);
+    if (far) {
+      document.getElementById('far-name').textContent = far.p.pref;
+      setZ(document.getElementById('far-z'), far.r.z);
+    }
+
+    const tbody = document.getElementById('summary-rows');
+    tbody.replaceChildren();
+    for (const {p, r} of latest) {
+      const tr = document.createElement('tr');
+      tr.tabIndex = 0;
+      const name = document.createElement('td');
+      const a = document.createElement('span');
+      a.className = 'pb-pref';
+      a.textContent = p.pref;
+      const b = document.createElement('span');
+      b.className = 'pb-common';
+      b.textContent = p.pair;
+      name.append(a, b);
+      const num = (text) => { const td = document.createElement('td'); td.className = 'num'; td.textContent = text; return td; };
+      const zTd = document.createElement('td');
+      zTd.className = 'num';
+      const wrap = document.createElement('span');
+      wrap.className = 'pb-zcell';
+      const zText = document.createElement('span');
+      setZ(zText, r.z);
+      const gx = d3.scaleLinear([-3, 3], [5, 79]);
+      const g = d3.create('svg').attr('class', 'pb-gauge').attr('width', 84).attr('height', 14).attr('viewBox', '0 0 84 14').attr('aria-hidden', 'true');
+      g.append('line').attr('x1', 5).attr('x2', 79).attr('y1', 7).attr('y2', 7);
+      g.selectAll('line.t').data(LEVELS).join('line').attr('class', 't')
+        .attr('x1', (k) => gx(k)).attr('x2', (k) => gx(k)).attr('y1', (k) => (k === 0 ? 1 : 4)).attr('y2', (k) => (k === 0 ? 13 : 10));
+      g.append('circle').attr('cx', gx(Math.max(-3, Math.min(3, r.z)))).attr('cy', 7).attr('r', 4).style('fill', zFill(r.z));
+      wrap.append(zText, g.node());
+      zTd.append(wrap);
+      tr.append(name, num(pct(r.ratio)), num(pct(r.mean)), num(pp(r.std)), zTd);
+      tr.addEventListener('click', () => goTo('pair-' + p.commonCode));
+      tr.addEventListener('keydown', (e) => { if (e.key === 'Enter') goTo('pair-' + p.commonCode); });
+      tbody.append(tr);
+
+      p.el.ratio.textContent = pct(r.ratio);
+      p.el.mean.textContent = pct(r.mean);
+      p.el.std.textContent = pp(r.std);
+      setZ(p.el.z, r.z);
+    }
+  }
+
+  function drawChart(p) {
+    const el = p.el.chart;
+    const rows = rowsFor(p);
+    el.replaceChildren();
+    if (!rows.length) return;
+
+    const W = Math.max(280, el.clientWidth);
+    const y1 = d3.scaleLinear([
+      d3.min(rows, (r) => Math.min(r.ratio, r.mean - BAND_K * r.std)),
+      d3.max(rows, (r) => Math.max(r.ratio, r.mean + BAND_K * r.std)),
+    ], [MT + H1, MT]).nice(4);
+    const zLo = Math.max(-Z_CLIP, Math.min(-3.5, d3.min(rows, (r) => r.z)));
+    const zHi = Math.min(Z_CLIP, Math.max(3.5, d3.max(rows, (r) => r.z)));
+    const y2 = d3.scaleLinear([zLo, zHi], [TOP2 + H2, TOP2]);
+    const clampZ = (z) => Math.max(zLo, Math.min(zHi, z));
+    const y1Ticks = y1.ticks(3);
+
+    const svg = d3.create('svg').attr('class', 'pb-svg').attr('width', '100%').attr('height', H)
+      .attr('viewBox', `0 0 ${W} ${H}`).attr('role', 'img')
+      .attr('aria-label', `${p.pref} / ${p.pair} 비율과 ${win}일 이동 z-score`);
+    el.append(svg.node());
+
+    const widest = (strings) => {
+      const g = svg.append('g');
+      const wd = d3.max(strings, (s) => g.append('text').text(s).node().getComputedTextLength()) || 0;
+      g.remove();
+      return Math.ceil(wd);
+    };
+    const ml = widest(y1Ticks.map((t) => t + '%')) + 8;
+    const mr = widest(LEVELS.map(levelName)) + 12;
+    const x = d3.scaleUtc(d3.extent(rows, (r) => r.day), [ml, W - mr]);
+    const innerW = W - mr - ml;
+
+    const clipId = `${el.id}-clip`;
+    svg.append('clipPath').attr('id', clipId).append('rect')
+      .attr('x', ml - 2).attr('y', TOP2).attr('width', innerW + 4).attr('height', H2);
+
+    const cap = svg.append('g').attr('class', 'pb-cap');
+    cap.append('text').attr('x', ml).attr('y', MT - 6).text(`비율 % · 점선 이동평균 · 음영 ±${BAND_K}σ`);
+    cap.append('text').attr('x', ml).attr('y', TOP2 - 8).text(`z-score (${win}일)`);
+
+    // 위 칸: 비율, 이동평균, ±BAND_K σ 범위
+    svg.append('path').datum(rows).attr('class', 'pb-band')
+      .attr('d', d3.area((r) => x(r.day), (r) => y1(r.mean - BAND_K * r.std), (r) => y1(r.mean + BAND_K * r.std)));
+    svg.append('g').attr('class', 'pb-tick').selectAll('text').data(y1Ticks).join('text')
+      .attr('x', ml - 8).attr('y', (t) => y1(t)).attr('dy', '0.32em').attr('text-anchor', 'end').text((t) => t + '%');
+    svg.append('path').datum(rows).attr('class', 'pb-mean').attr('d', d3.line((r) => x(r.day), (r) => y1(r.mean)));
+    svg.append('path').datum(rows).attr('class', 'pb-line').attr('d', d3.line((r) => x(r.day), (r) => y1(r.ratio)));
+
+    // 아래 칸: z-score와 σ 가로선
+    svg.append('rect').attr('class', 'pb-zone').attr('x', ml).attr('width', innerW).attr('y', y2(1)).attr('height', y2(-1) - y2(1));
+    svg.append('g').selectAll('line').data(LEVELS).join('line')
+      .attr('class', (k) => 'pb-lvl-line pb-k' + Math.abs(k))
+      .attr('x1', ml).attr('x2', W - mr).attr('y1', (k) => y2(k)).attr('y2', (k) => y2(k));
+    svg.append('g').attr('class', 'pb-lvl').selectAll('text').data(LEVELS).join('text')
+      .attr('class', (k) => 'pb-k' + Math.abs(k))
+      .attr('x', W - mr + 6).attr('y', (k) => y2(k)).attr('dy', '0.32em').text(levelName);
+    svg.append('path').datum(rows).attr('class', 'pb-line').attr('clip-path', `url(#${clipId})`)
+      .attr('d', d3.line((r) => x(r.day), (r) => y2(r.z)));
+    const end = rows[rows.length - 1];
+    svg.append('circle').attr('cx', x(end.day)).attr('cy', y2(clampZ(end.z))).attr('r', 3.5).style('fill', zFill(end.z));
+
+    const xAxis = d3.axisBottom(x).ticks(d3.utcMonth.every(innerW < 360 ? 6 : 3))
+      .tickFormat(d3.utcFormat('%y.%m')).tickSize(4).tickSizeOuter(0);
+    svg.append('g').attr('class', 'pb-xaxis').attr('transform', `translate(0,${TOP2 + H2})`)
+      .call(xAxis).attr('font-size', null).attr('font-family', null);
+
+    const rule = svg.append('line').attr('class', 'pb-rule').attr('y1', MT).attr('y2', TOP2 + H2).style('opacity', 0);
+    const dot1 = svg.append('circle').attr('class', 'pb-hover').attr('r', 4).style('fill', 'var(--accent)').style('opacity', 0);
+    const dot2 = svg.append('circle').attr('class', 'pb-hover').attr('r', 4).style('opacity', 0);
+
+    const tip = document.createElement('div');
+    tip.className = 'pb-tip';
+    tip.hidden = true;
+    const lines = Array.from({length: 5}, () => document.createElement('span'));
+    lines[0].className = 'pb-tip-date';
+    tip.append(...lines);
+    el.append(tip);
+
+    const nearest = d3.bisector((r) => r.day).center;
+    svg.append('rect').attr('x', ml).attr('y', MT).attr('width', innerW).attr('height', TOP2 + H2 - MT)
+      .attr('fill', 'transparent').style('cursor', 'crosshair')
+      .on('pointermove', (ev) => {
+        const [px, py] = d3.pointer(ev);
+        const r = rows[nearest(rows, x.invert(px))];
+        const cx = x(r.day);
+        rule.attr('x1', cx).attr('x2', cx).style('opacity', 1);
+        dot1.attr('cx', cx).attr('cy', y1(r.ratio)).style('opacity', 1);
+        dot2.attr('cx', cx).attr('cy', y2(clampZ(r.z))).style('fill', zFill(r.z)).style('opacity', 1);
+        lines[0].textContent = r.date;
+        lines[1].textContent = `비율 ${pct(r.ratio)}`;
+        lines[2].textContent = `${win}일 평균 ${pct(r.mean)} · σ ${pp(r.std)}`;
+        lines[3].textContent = `z ${fmtZ(r.z)}`;
+        lines[3].className = zClass(r.z);
+        lines[4].textContent = `본주 ${fmtInt(r.c)} · 우선주 ${fmtInt(r.pc)}`;
+        tip.hidden = false;
+        const scale = el.clientWidth / W;
+        const tw = tip.offsetWidth, th = tip.offsetHeight;
+        let left = cx * scale + 12;
+        if (left + tw > el.clientWidth) left = cx * scale - 12 - tw;
+        let top = py * scale - th - 12;
+        if (top < 0) top = py * scale + 16;
+        tip.style.left = Math.max(0, left) + 'px';
+        tip.style.top = Math.min(top, H * scale - th) + 'px';
+      })
+      .on('pointerleave', () => {
+        rule.style('opacity', 0);
+        dot1.style('opacity', 0);
+        dot2.style('opacity', 0);
+        tip.hidden = true;
+      });
+  }
+
+  function render() {
+    renderSummary();
+    pairs.forEach(drawChart);
+  }
+
+  document.querySelectorAll('.pb-win').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      win = Number(btn.dataset.window);
+      try { localStorage.setItem('pb-window', String(win)); } catch {}
+      render();
+    });
+  });
+
+  fetch('data.json', {cache: 'no-cache'})
+    .then((res) => { if (!res.ok) throw new Error(res.status); return res.json(); })
+    .then((data) => {
+      pairs = data.pairs.map((p) => ({...p, days: p.dates.map(parseDay)}));
+      document.getElementById('first-date').textContent = pairs[0].dates[0];
+      document.getElementById('last-date').textContent = d3.max(pairs, (p) => p.dates.at(-1));
+      document.getElementById('updated').textContent = data.updated;
+      buildCards();
+      render();
+
+      let lastWidth = 0;
+      new ResizeObserver(([entry]) => {
+        const w = Math.round(entry.contentRect.width);
+        if (w === lastWidth) return;
+        lastWidth = w;
+        pairs.forEach(drawChart);
+      }).observe(document.getElementById('grid'));
+
+      const target = location.hash && document.getElementById(location.hash.slice(1));
+      if (target) target.scrollIntoView();
+    })
+    .catch(() => { document.getElementById('load-error').hidden = false; });
+</script>
+</body>
+</html>
